@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PolyChat</title>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <style>
+        body { margin: 0; font-family: Verdana, sans-serif; font-size: 12px; display: flex; background: #fff; overflow: hidden; }
+        .sidebar { height: 100vh; width: 180px; position: fixed; background: #f5f5f5; border-right: 1px solid #ccc; padding: 15px 10px; z-index: 1000; }
+        .sidebar h3 { font-size: 14px; color: #333; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+        .sidebar a { padding: 6px 5px; text-decoration: none; color: #0066cc; display: block; cursor: pointer; }
+        .sidebar a:hover { text-decoration: underline; background: #eee; }
+        
+        .main-content { margin-left: 200px; width: calc(100vw - 200px); height: 100vh; position: relative; background: #aaaaaa; }
+        #gameCanvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+
+        /* Circle Buttons UI */
+        .ui-buttons { position: absolute; top: 40px; left: 30px; display: flex; flex-direction: column; gap: 25px; }
+        .circle-btn { width: 60px; height: 60px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #fff, #bbb); border: 2px solid #777; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 10px; text-align: center; }
+        .circle-btn:hover { transform: scale(1.05); }
+
+        .status-bar { position: absolute; top: 15px; right: 25px; background: rgba(255,255,255,0.9); padding: 8px 15px; border: 1px solid #ccc; font-weight: bold; }
+        .chatbux-text { color: #2E8B57; }
+
+        /* Universal Modal Style */
+        .modal { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; padding: 20px; border: 1px solid #000; box-shadow: 6px 6px 0px rgba(0,0,0,0.2); z-index: 101; width: 320px; max-height: 80vh; overflow-y: auto; }
+        .modal h2 { margin-top: 0; font-size: 16px; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+        
+        /* Chat Box Overlay */
+        #chatDisplay { position: absolute; bottom: 20px; left: 30px; width: 300px; height: 150px; background: rgba(0,0,0,0.5); color: #fff; padding: 10px; overflow-y: auto; border-radius: 5px; pointer-events: none; }
+        #chatInput { position: absolute; bottom: 180px; left: 30px; width: 250px; display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <h3>PolyChat</h3>
+        <a onclick="toggleModal('authModal')">Login / Register</a>
+        <a onclick="toggleModal('accountModal')">My Account</a>
+        <hr>
+        <a onclick="logout()">Logout</a>
+        <a style="color:red" onclick="deleteAccount()">Delete Account</a>
+    </div>
+
+    <div class="main-content">
+        <div class="status-bar">
+            User: <span id="displayUser">Guest</span> | <span class="chatbux-text">Chatbux: <span id="buxCount">0</span></span>
+        </div>
+
+        <div class="ui-buttons">
+            <div class="circle-btn" onclick="toggleModal('customModal')">AVATAR</div>
+            <div class="circle-btn" onclick="toggleModal('marketModal')">SHOP</div>
+            <div class="circle-btn" onclick="openChat()">CHAT</div>
+            <div class="circle-btn" onclick="toggleModal('friendsModal')">FRIENDS</div>
+        </div>
+
+        <canvas id="gameCanvas"></canvas>
+        <div id="chatDisplay"></div>
+        <input type="text" id="chatInput" placeholder="Press Enter to chat...">
+
+        <div id="authModal" class="modal">
+            <h2>Authentication</h2>
+            <input type="text" id="email" placeholder="Email" style="width:90%"><br>
+            <input type="password" id="pass" placeholder="Password" style="width:90%"><br><br>
+            <button onclick="handleAuth('login')">Login</button>
+            <button onclick="handleAuth('register')">Register</button>
+        </div>
+
+        <div id="customModal" class="modal">
+            <h2>Avatar Editor</h2>
+            Head: <input type="color" id="cHead" value="#7A7A7A"><br>
+            Torso: <input type="color" id="cTorso" value="#7A7A7A"><br>
+            Arms: <input type="color" id="cArms" value="#7A7A7A"><br>
+            Legs: <input type="color" id="cLegs" value="#7A7A7A"><br>
+            <button onclick="saveSettings()" style="margin-top:10px">Save Changes</button>
+            <button onclick="toggleModal('customModal')">Close</button>
+        </div>
+
+        <div id="marketModal" class="modal">
+            <h2>Marketplace</h2>
+            <p>Your Balance: <span class="chatbux-text" id="marketBux">0</span></p>
+            <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 5px;">
+                <strong>Top Hat</strong> - 50 Chatbux
+                <button onclick="buyItem('tophat', 50)">Buy</button>
+            </div>
+            <div style="border: 1px solid #ccc; padding: 10px;">
+                <strong>Red Ninja Mask</strong> - 100 Chatbux
+                <button onclick="buyItem('mask', 100)">Buy</button>
+            </div>
+            <br><button onclick="toggleModal('marketModal')">Close</button>
+        </div>
+
+        <div id="friendsModal" class="modal">
+            <h2>Online Friends</h2>
+            <div id="friendList">Finding players...</div>
+            <br><button onclick="toggleModal('friendsModal')">Close</button>
+        </div>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+  apiKey: "AIzaSyAR-GU7A_UiiIznWPwQmQYM92DyP4I7RvE",
+  authDomain: "polychat-6347a.firebaseapp.com",
+  projectId: "polychat-6347a",
+  storageBucket: "polychat-6347a.firebasestorage.app",
+  messagingSenderId: "551598113279",
+  appId: "1:551598113279:web:2678519b8c5046cfb0a7ca",
+  measurementId: "G-5H5ZKV9RFE"
+};
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let player = { x: 300, y: 300, targetX: 300, targetY: 300, colors: {head:'#7a7a7a', torso:'#7a7a7a', arms:'#7a7a7a', legs:'#7a7a7a'}, hat: null };
+        let chatbux = 0;
+        let otherPlayers = {};
+
+        function resize() { canvas.width = canvas.parentElement.clientWidth; canvas.height = canvas.parentElement.clientHeight; }
+        window.addEventListener('resize', resize); resize();
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (!auth.currentUser) return;
+            const rect = canvas.getBoundingClientRect();
+            player.targetX = e.clientX - rect.left;
+            player.targetY = e.clientY - rect.top;
+            db.collection("players").doc(auth.currentUser.uid).update({ x: player.targetX, y: player.targetY });
+        });
+
+        function drawChar(x, y, colors, name, hatType) {
+            // Shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.1)';
+            ctx.beginPath(); ctx.ellipse(x, y+45, 25, 8, 0, 0, Math.PI*2); ctx.fill();
+
+            // Character Body Parts
+            ctx.fillStyle = colors.head; ctx.fillRect(x - 15, y - 40, 30, 30);
+            ctx.fillStyle = colors.torso; ctx.fillRect(x - 20, y - 10, 40, 35);
+            ctx.fillStyle = colors.arms; ctx.fillRect(x - 35, y - 10, 14, 30); ctx.fillRect(x + 21, y - 10, 14, 30);
+            ctx.fillStyle = colors.legs; ctx.fillRect(x - 18, y + 25, 16, 20); ctx.fillRect(x + 2, y + 25, 16, 20);
+            
+            // Hat Rendering
+            if(hatType === 'tophat') { ctx.fillStyle = 'black'; ctx.fillRect(x-20, y-45, 40, 5); ctx.fillRect(x-12, y-65, 24, 20); }
+            if(hatType === 'mask') { ctx.fillStyle = 'red'; ctx.fillRect(x-15, y-25, 30, 10); }
+
+            ctx.fillStyle = 'black'; ctx.textAlign = "center"; ctx.fillText(name, x, y - 50);
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            player.x += (player.targetX - player.x) * 0.1;
+            player.y += (player.targetY - player.y) * 0.1;
+            drawChar(player.x, player.y, player.colors, "You", player.hat);
+            
+            Object.values(otherPlayers).forEach(p => drawChar(p.x, p.y, p.colors, p.name, p.hat));
+            requestAnimationFrame(gameLoop);
+        }
+        gameLoop();
+
+        function toggleModal(id) {
+            const m = document.getElementById(id);
+            m.style.display = (m.style.display === 'block') ? 'none' : 'block';
+        }
+
+        function openChat() {
+            const input = document.getElementById('chatInput');
+            input.style.display = 'block';
+            input.focus();
+        }
+
+        document.getElementById('chatInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && auth.currentUser) {
+                const msg = e.target.value;
+                db.collection("chats").add({
+                    user: auth.currentUser.email.split('@')[0],
+                    text: msg,
+                    time: Date.now()
+                });
+                e.target.value = '';
+                e.target.style.display = 'none';
+            }
+        });
+
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                document.getElementById('displayUser').innerText = user.email;
+                document.getElementById('authModal').style.display = 'none';
+                
+                db.collection("players").onSnapshot(snap => {
+                    let friendHtml = "";
+                    snap.forEach(doc => {
+                        const data = doc.data();
+                        if (doc.id === user.uid) {
+                            chatbux = data.chatbux || 0;
+                            player.colors = JSON.parse(data.colors);
+                            player.hat = data.hat || null;
+                            document.getElementById('buxCount').innerText = chatbux;
+                            document.getElementById('marketBux').innerText = chatbux;
+                        } else {
+                            otherPlayers[doc.id] = { x: data.x, y: data.y, name: data.name, colors: JSON.parse(data.colors), hat: data.hat };
+                            friendHtml += `<div>• ${data.name} (Online)</div>`;
+                        }
+                    });
+                    document.getElementById('friendList').innerHTML = friendHtml || "No one else is online.";
+                });
+
+                db.collection("chats").orderBy("time", "desc").limit(5).onSnapshot(snap => {
+                    let chatHtml = "";
+                    snap.forEach(doc => {
+                        const c = doc.data();
+                        chatHtml += `<div><strong>${c.user}:</strong> ${c.text}</div>`;
+                    });
+                    document.getElementById('chatDisplay').innerHTML = chatHtml;
+                });
+
+                setInterval(() => {
+                    db.collection("players").doc(user.uid).update({ chatbux: firebase.firestore.FieldValue.increment(1) });
+                }, 60000);
+            }
+        });
+
+        async function buyItem(item, cost) {
+            if (chatbux >= cost && auth.currentUser) {
+                await db.collection("players").doc(auth.currentUser.uid).update({
+                    chatbux: chatbux - cost,
+                    hat: item
+                });
+                alert("Purchased!");
+            } else { alert("Not enough Chatbux!"); }
+        }
+
+        async function saveSettings() {
+            const colors = {
+                head: document.getElementById('cHead').value,
+                torso: document.getElementById('cTorso').value,
+                arms: document.getElementById('cArms').value,
+                legs: document.getElementById('cLegs').value
+            };
+            if (auth.currentUser) {
+                await db.collection("players").doc(auth.currentUser.uid).update({ colors: JSON.stringify(colors) });
+                alert("Avatar Updated!");
+            }
+        }
+
+        async function handleAuth(type) {
+            const email = document.getElementById('email').value;
+            const pass = document.getElementById('pass').value;
+            try {
+                if (type === 'login') await auth.signInWithEmailAndPassword(email, pass);
+                else {
+                    const res = await auth.createUserWithEmailAndPassword(email, pass);
+                    await db.collection("players").doc(res.user.uid).set({
+                        x: 300, y: 300, chatbux: 20, name: email.split('@')[0], hat: null,
+                        colors: JSON.stringify({head:'#7a7a7a', torso:'#7a7a7a', arms:'#7a7a7a', legs:'#7a7a7a'})
+                    });
+                }
+            } catch (e) { alert(e.message); }
+        }
+
+        function logout() { auth.signOut(); location.reload(); }
+    </script>
+</body>
+</html>
